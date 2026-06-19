@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>智能电网变电站诊断工具 - IEC 61850</title>
+  <style>
+    :root {
+      --bg-primary: #0a0e17;
+      --bg-secondary: #0d1117;
+      --bg-panel: #111827;
+      --bg-card: #1a2030;
+      --border: #1e2d3d;
+      --border-light: #2a3a4d;
+      --text-primary: #e0e0e0;
+      --text-secondary: #8892a0;
+      --text-muted: #556070;
+      --accent-green: #00ff88;
+      --accent-red: #ff4444;
+      --accent-yellow: #ffaa00;
+      --accent-cyan: #00ddff;
+      --accent-blue: #3366aa;
+      --glow-green: rgba(0, 255, 136, 0.15);
+      --glow-red: rgba(255, 68, 68, 0.15);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: 'Consolas', 'Courier New', 'Monaco', monospace;
+      font-size: 12px;
+    }
+
+    .app-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 40px;
+      padding: 0 16px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .app-header h1 {
+      font-size: 14px;
+      font-weight: bold;
+      color: var(--accent-green);
+      letter-spacing: 1px;
+    }
+
+    .app-header .header-info {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-red);
+      margin-right: 4px;
+    }
+
+    .status-dot.connected {
+      background: var(--accent-green);
+      box-shadow: 0 0 6px var(--accent-green);
+    }
+
+    .main-layout {
+      display: flex;
+      height: calc(100vh - 40px - 28px);
+    }
+
+    .left-panel {
+      flex: 0 0 70%;
+      max-width: 70%;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+    }
+
+    .sld-container {
+      flex: 1;
+      position: relative;
+      background: var(--bg-secondary);
+    }
+
+    .sld-container canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+
+    .right-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-primary);
+      overflow: hidden;
+    }
+
+    .panel-section {
+      display: flex;
+      flex-direction: column;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      font-weight: bold;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .panel-header .badge {
+      background: var(--bg-card);
+      color: var(--accent-yellow);
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+    }
+
+    .goose-section {
+      flex: 0 0 35%;
+    }
+
+    .goose-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 8px;
+      background: var(--bg-secondary);
+    }
+
+    .goose-list::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .goose-list::-webkit-scrollbar-track {
+      background: var(--bg-primary);
+    }
+
+    .goose-list::-webkit-scrollbar-thumb {
+      background: var(--border-light);
+      border-radius: 3px;
+    }
+
+    .goose-item {
+      padding: 6px 8px;
+      margin-bottom: 4px;
+      background: var(--bg-card);
+      border-left: 3px solid var(--accent-green);
+      border-radius: 2px;
+      font-size: 10px;
+    }
+
+    .goose-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 3px;
+    }
+
+    .goose-id {
+      color: var(--accent-cyan);
+      font-weight: bold;
+    }
+
+    .goose-time {
+      color: var(--text-muted);
+    }
+
+    .goose-detail {
+      color: var(--text-secondary);
+      margin-bottom: 2px;
+    }
+
+    .goose-breakers {
+      font-size: 9px;
+    }
+
+    .waveform-section {
+      flex: 0 0 40%;
+    }
+
+    .waveform-container {
+      flex: 1;
+      position: relative;
+      background: var(--bg-secondary);
+    }
+
+    .waveform-container canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+
+    .status-section {
+      flex: 1;
+    }
+
+    .status-content {
+      padding: 10px 12px;
+      background: var(--bg-secondary);
+    }
+
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      font-size: 11px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .status-row:last-child {
+      border-bottom: none;
+    }
+
+    .status-label {
+      color: var(--text-muted);
+    }
+
+    .status-value {
+      color: var(--text-primary);
+    }
+
+    .status-value.green {
+      color: var(--accent-green);
+    }
+
+    .status-value.red {
+      color: var(--accent-red);
+    }
+
+    .status-value.yellow {
+      color: var(--accent-yellow);
+    }
+
+    .footer-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 28px;
+      padding: 0 16px;
+      background: var(--bg-panel);
+      border-top: 1px solid var(--border);
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .footer-bar .stats {
+      color: var(--text-secondary);
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .pulse {
+      animation: pulse 2s ease-in-out infinite;
+    }
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <h1>IEC 61850 智能电网变电站诊断工具</h1>
+    <div class="header-info">
+      <span id="connection-status">
+        <span class="status-dot"></span> Disconnected
+      </span>
+      <span>IEC 61850 GOOSE/SV</span>
+    </div>
+  </header>
+
+  <div class="main-layout">
+    <div class="left-panel">
+      <div class="panel-header">
+        <span>Single Line Diagram</span>
+        <span class="badge">220kV / 110kV</span>
+      </div>
+      <div class="sld-container">
+        <canvas id="sld-canvas"></canvas>
+      </div>
+    </div>
+
+    <div class="right-panel">
+      <div class="panel-section goose-section">
+        <div class="panel-header">
+          <span>GOOSE Messages</span>
+          <span class="badge" id="goose-count">0</span>
+        </div>
+        <div class="goose-list" id="goose-list"></div>
+      </div>
+
+      <div class="panel-section waveform-section">
+        <div class="panel-header">
+          <span>SV Waveform</span>
+          <span class="badge">4CH</span>
+        </div>
+        <div class="waveform-container">
+          <canvas id="waveform-canvas"></canvas>
+        </div>
+      </div>
+
+      <div class="panel-section status-section">
+        <div class="panel-header">
+          <span>Connection Status</span>
+        </div>
+        <div class="status-content">
+          <div class="status-row">
+            <span class="status-label">WebSocket</span>
+            <span class="status-value" id="ws-status">Disconnected</span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">Server</span>
+            <span class="status-value">ws://localhost:9502</span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">GOOSE Messages</span>
+            <span class="status-value green" id="goose-total">0</span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">SV Messages</span>
+            <span class="status-value yellow" id="sv-total">0</span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">Reconnect Attempts</span>
+            <span class="status-value" id="reconnect-attempts">0</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer-bar">
+    <span>IEC 61850 Diagnostic Tool v1.0</span>
+    <span class="stats" id="stats-bar">GOOSE: 0 | SV: 0</span>
+  </footer>
+
+  <script type="module" src="./renderer.ts"></script>
+</body>
+</html>
