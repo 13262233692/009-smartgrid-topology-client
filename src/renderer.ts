@@ -15,6 +15,13 @@ class App {
   private svTotalEl: HTMLElement | null = null;
   private reconnectEl: HTMLElement | null = null;
   private gooseCountBadgeEl: HTMLElement | null = null;
+  private islandSectionEl: HTMLElement | null = null;
+  private islandCountBadgeEl: HTMLElement | null = null;
+  private islandStatCountEl: HTMLElement | null = null;
+  private islandStatDevicesEl: HTMLElement | null = null;
+  private islandStatRegionsEl: HTMLElement | null = null;
+  private islandListEl: HTMLElement | null = null;
+  private lastIslandCount: number = -1;
 
   constructor() {
     this.dataService = DataService.getInstance();
@@ -30,6 +37,13 @@ class App {
     this.svTotalEl = document.getElementById('sv-total');
     this.reconnectEl = document.getElementById('reconnect-attempts');
     this.gooseCountBadgeEl = document.getElementById('goose-count');
+
+    this.islandSectionEl = document.getElementById('island-section');
+    this.islandCountBadgeEl = document.getElementById('island-count-badge');
+    this.islandStatCountEl = document.getElementById('island-stat-count');
+    this.islandStatDevicesEl = document.getElementById('island-stat-devices');
+    this.islandStatRegionsEl = document.getElementById('island-stat-regions');
+    this.islandListEl = document.getElementById('island-list');
 
     if (sldCanvas) {
       const parent = sldCanvas.parentElement!;
@@ -113,6 +127,7 @@ class App {
       this.waveformRenderer?.render();
       this.updateStatusPanels();
       this.updateStormBanner();
+      this.updateIslandPanel();
       frame++;
       if (frame % 60 === 0) {
         this.updateGooseListBatch();
@@ -199,6 +214,79 @@ class App {
     }
     if (this.svTotalEl) {
       this.svTotalEl.textContent = String(stats.svCount);
+    }
+  }
+
+  private updateIslandPanel(): void {
+    if (!this.islandSectionEl) return;
+    const analysis = this.sldRenderer?.getLastAnalysis();
+    if (!analysis) return;
+
+    const activeIslands = analysis.islands.filter((i) => !i.hasSource);
+    const islandCount = activeIslands.length;
+    const isolatedDevices = analysis.isolatedCount;
+    const totalRegions = analysis.islands.length + 1;
+
+    if (this.islandCountBadgeEl) {
+      this.islandCountBadgeEl.textContent = String(islandCount);
+      this.islandCountBadgeEl.style.backgroundColor = islandCount > 0 ? '#ff6b35' : '';
+    }
+
+    if (this.islandStatCountEl) {
+      const valEl = this.islandStatCountEl.querySelector('.island-stat-value');
+      if (valEl) valEl.textContent = String(islandCount);
+      if (islandCount > 0) this.islandStatCountEl.classList.add('alarm');
+      else this.islandStatCountEl.classList.remove('alarm');
+    }
+    if (this.islandStatDevicesEl) {
+      const valEl = this.islandStatDevicesEl.querySelector('.island-stat-value');
+      if (valEl) valEl.textContent = String(isolatedDevices);
+      if (isolatedDevices > 0) this.islandStatDevicesEl.classList.add('alarm');
+      else this.islandStatDevicesEl.classList.remove('alarm');
+    }
+    if (this.islandStatRegionsEl) {
+      const valEl = this.islandStatRegionsEl.querySelector('.island-stat-value');
+      if (valEl) valEl.textContent = String(totalRegions);
+    }
+
+    if (islandCount > 0) {
+      this.islandSectionEl.classList.add('active');
+    } else {
+      this.islandSectionEl.classList.remove('active');
+    }
+
+    if (islandCount !== this.lastIslandCount && this.islandListEl) {
+      this.lastIslandCount = islandCount;
+      const listEl = this.islandListEl;
+      listEl.innerHTML = '';
+      const comps = this.sldRenderer?.getComponents() || [];
+
+      for (const il of activeIslands) {
+        const card = document.createElement('div');
+        card.className = 'island-card' + (il.type === 'grounded' ? ' grounded' : '');
+
+        const labels = il.memberIds
+          .slice(0, 12)
+          .map((mid) => {
+            const c = comps.find((cc) => cc.id === mid);
+            const lbl = c?.label || mid.replace(/_/g, ' ');
+            return `<span class="island-member-tag">${lbl}</span>`;
+          })
+          .join('');
+        const more = il.memberIds.length > 12 ? ` <span class="island-member-tag" style="opacity:0.6">+${il.memberIds.length - 12}</span>` : '';
+
+        const typeLabel = il.type === 'grounded' ? '接地孤岛' : '供电孤岛';
+        const header = `▼ 孤岛#${il.id} · ${typeLabel}`;
+
+        card.innerHTML = `
+          <div class="island-card-header">
+            <span class="island-card-title">${header}</span>
+            <span class="island-card-size">${il.size} 设备</span>
+          </div>
+          <div class="island-card-members">${labels}${more}</div>
+        `;
+        listEl.appendChild(card);
+      }
     }
   }
 

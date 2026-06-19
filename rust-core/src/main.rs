@@ -112,7 +112,36 @@ fn simulate_goose(tx: broadcast::Sender<SubstationEvent>) {
     let storm_mode = std::env::var("STORM_MODE").is_ok();
     eprintln!("[goose_sim] storm_mode={storm_mode}");
 
+    let start_time = std::time::Instant::now();
+    const NORMAL_PERIOD: u64 = 25;
+    const ISLAND_PERIOD: u64 = 20;
+    const CYCLE: u64 = NORMAL_PERIOD + ISLAND_PERIOD;
+
     loop {
+        let elapsed = start_time.elapsed().as_secs();
+        let cycle_pos = elapsed % CYCLE;
+        let fault_active = cycle_pos >= NORMAL_PERIOD;
+
+        let force_override: std::collections::HashMap<&str, BreakerStatus> = if fault_active {
+            let mut m = std::collections::HashMap::new();
+            m.insert("brk_xfmr1_hv", BreakerStatus::Open);
+            m.insert("brk_xfmr2_hv", BreakerStatus::Open);
+            m.insert("brk_110_coupler", BreakerStatus::Open);
+            m.insert("brk_220_coupler", BreakerStatus::Closed);
+            m.insert("brk_xfmr1_lv", BreakerStatus::Open);
+            m.insert("brk_xfmr2_lv", BreakerStatus::Open);
+            m
+        } else {
+            let mut m = std::collections::HashMap::new();
+            m.insert("brk_xfmr1_hv", BreakerStatus::Closed);
+            m.insert("brk_xfmr2_hv", BreakerStatus::Closed);
+            m.insert("brk_xfmr1_lv", BreakerStatus::Closed);
+            m.insert("brk_xfmr2_lv", BreakerStatus::Closed);
+            m.insert("brk_220_coupler", BreakerStatus::Closed);
+            m.insert("brk_110_coupler", BreakerStatus::Closed);
+            m
+        };
+
         if storm_mode {
             let burst = 50;
             for _ in 0..burst {
@@ -123,10 +152,16 @@ fn simulate_goose(tx: broadcast::Sender<SubstationEvent>) {
                 }
                 let mut breaker_statuses = HashMap::new();
                 for name in &breaker_names {
-                    let status = if rng.random_bool(0.7) {
-                        BreakerStatus::Closed
-                    } else {
-                        BreakerStatus::Open
+                let forced = force_override.get(&name[..]);
+                    let status = match forced {
+                        Some(s) => s.clone(),
+                        None => {
+                            if rng.random_bool(0.85) {
+                                BreakerStatus::Closed
+                            } else {
+                                BreakerStatus::Open
+                            }
+                        }
                     };
                     breaker_statuses.insert(name.to_string(), status);
                 }
@@ -144,6 +179,14 @@ fn simulate_goose(tx: broadcast::Sender<SubstationEvent>) {
                     return;
                 }
             }
+            if cycle_pos == NORMAL_PERIOD || cycle_pos == 0 {
+                let msg = if fault_active {
+                    "⚡ 孤岛故障触发：双变跳闸+110kV母联跳 → 110kV II 母成为孤岛"
+                } else {
+                    "✓ 故障恢复：所有断路器复归 → 电网连通"
+                };
+                eprintln!("[fault_scene] {msg}");
+            }
             std::thread::sleep(std::time::Duration::from_millis(50));
         } else {
             let delay_secs = rng.random_range(2.0..5.0);
@@ -157,12 +200,27 @@ fn simulate_goose(tx: broadcast::Sender<SubstationEvent>) {
 
             let mut breaker_statuses = HashMap::new();
             for name in &breaker_names {
-                let status = if rng.random_bool(0.7) {
-                    BreakerStatus::Closed
-                } else {
-                    BreakerStatus::Open
+                let forced = force_override.get(&name[..]);
+                let status = match forced {
+                    Some(s) => s.clone(),
+                    None => {
+                        if rng.random_bool(0.85) {
+                            BreakerStatus::Closed
+                        } else {
+                            BreakerStatus::Open
+                        }
+                    }
                 };
                 breaker_statuses.insert(name.to_string(), status);
+            }
+
+            if cycle_pos == NORMAL_PERIOD || cycle_pos == 0 {
+                let msg = if fault_active {
+                    "⚡ 孤岛故障触发：双变跳闸+110kV母联跳 → 110kV II 母成为孤岛"
+                } else {
+                    "✓ 故障恢复：所有断路器复归 → 电网连通"
+                };
+                eprintln!("[fault_scene] {msg}");
             }
 
             let now = chrono::Utc::now().timestamp_millis() as u64;
