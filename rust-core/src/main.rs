@@ -1,3 +1,4 @@
+mod aggregator;
 mod capture;
 mod goose;
 mod models;
@@ -108,40 +109,77 @@ fn simulate_goose(tx: broadcast::Sender<SubstationEvent>) {
     let mut st_num: u32 = 1;
     let mut sq_num: u32 = 0;
 
+    let storm_mode = std::env::var("STORM_MODE").is_ok();
+    eprintln!("[goose_sim] storm_mode={storm_mode}");
+
     loop {
-        let delay_secs = rng.random_range(2.0..5.0);
-        std::thread::sleep(std::time::Duration::from_secs_f64(delay_secs));
+        if storm_mode {
+            let burst = 50;
+            for _ in 0..burst {
+                sq_num += 1;
+                if rng.random_bool(0.02) {
+                    st_num += 1;
+                    sq_num = 1;
+                }
+                let mut breaker_statuses = HashMap::new();
+                for name in &breaker_names {
+                    let status = if rng.random_bool(0.7) {
+                        BreakerStatus::Closed
+                    } else {
+                        BreakerStatus::Open
+                    };
+                    breaker_statuses.insert(name.to_string(), status);
+                }
+                let now = chrono::Utc::now().timestamp_millis() as u64;
+                let goose = GooseMessage {
+                    go_id: format!("GO_{st_num}"),
+                    gocb_ref: format!("LD0/LLN0$GO$goCB{}", st_num % 8 + 1),
+                    st_num,
+                    sq_num,
+                    timestamp: now,
+                    dataset_ref: format!("LD0/LLN0$dsGOOSE{st_num}"),
+                    breaker_statuses,
+                };
+                if tx.send(SubstationEvent::Goose(goose)).is_err() {
+                    return;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        } else {
+            let delay_secs = rng.random_range(2.0..5.0);
+            std::thread::sleep(std::time::Duration::from_secs_f64(delay_secs));
 
-        sq_num += 1;
-        if rng.random_bool(0.15) {
-            st_num += 1;
-            sq_num = 1;
-        }
+            sq_num += 1;
+            if rng.random_bool(0.15) {
+                st_num += 1;
+                sq_num = 1;
+            }
 
-        let mut breaker_statuses = HashMap::new();
-        for name in &breaker_names {
-            let status = if rng.random_bool(0.7) {
-                BreakerStatus::Closed
-            } else {
-                BreakerStatus::Open
+            let mut breaker_statuses = HashMap::new();
+            for name in &breaker_names {
+                let status = if rng.random_bool(0.7) {
+                    BreakerStatus::Closed
+                } else {
+                    BreakerStatus::Open
+                };
+                breaker_statuses.insert(name.to_string(), status);
+            }
+
+            let now = chrono::Utc::now().timestamp_millis() as u64;
+
+            let goose = GooseMessage {
+                go_id: format!("GO_{st_num}"),
+                gocb_ref: format!("LD0/LLN0$GO$goCB{st_num}"),
+                st_num,
+                sq_num,
+                timestamp: now,
+                dataset_ref: format!("LD0/LLN0$dsGOOSE{st_num}"),
+                breaker_statuses,
             };
-            breaker_statuses.insert(name.to_string(), status);
-        }
 
-        let now = chrono::Utc::now().timestamp_millis() as u64;
-
-        let goose = GooseMessage {
-            go_id: format!("GO_{st_num}"),
-            gocb_ref: format!("LD0/LLN0$GO$goCB{st_num}"),
-            st_num,
-            sq_num,
-            timestamp: now,
-            dataset_ref: format!("LD0/LLN0$dsGOOSE{st_num}"),
-            breaker_statuses,
-        };
-
-        if tx.send(SubstationEvent::Goose(goose)).is_err() {
-            break;
+            if tx.send(SubstationEvent::Goose(goose)).is_err() {
+                break;
+            }
         }
     }
 }

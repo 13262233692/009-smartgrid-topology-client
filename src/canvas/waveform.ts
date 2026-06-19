@@ -18,6 +18,7 @@ class WaveformRenderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private channels: ChannelData[] = [];
+  private pendingBuffer: number[][] = [];
   private dpr: number = 1;
   private yMin: number = -1;
   private yMax: number = 1;
@@ -48,18 +49,37 @@ class WaveformRenderer {
     const voltB = msg.voltageChannels[1] ?? 0;
     const currA = msg.currentChannels[0] ?? 0;
     const currB = msg.currentChannels[1] ?? 0;
-
-    const newValues = [voltA, voltB, currA, currB];
-
-    for (let i = 0; i < this.channels.length; i++) {
-      this.channels[i].values.push(newValues[i]);
-      if (this.channels[i].values.length > MAX_VISIBLE_SAMPLES * 2) {
-        this.channels[i].values = this.channels[i].values.slice(-MAX_VISIBLE_SAMPLES);
-      }
+    this.pendingBuffer.push([voltA, voltB, currA, currB]);
+    if (this.pendingBuffer.length > MAX_VISIBLE_SAMPLES * 4) {
+      this.pendingBuffer.splice(0, this.pendingBuffer.length - MAX_VISIBLE_SAMPLES * 2);
     }
   }
 
+  swapBuffers(): void {
+    if (this.pendingBuffer.length === 0) return;
+    const batch = this.pendingBuffer;
+    this.pendingBuffer = [];
+    let yMin = this.yMin;
+    let yMax = this.yMax;
+    for (let k = 0; k < batch.length; k++) {
+      const newValues = batch[k];
+      for (let i = 0; i < this.channels.length; i++) {
+        const v = newValues[i];
+        this.channels[i].values.push(v);
+        if (v < yMin) yMin = v;
+        if (v > yMax) yMax = v;
+        if (this.channels[i].values.length > MAX_VISIBLE_SAMPLES * 2) {
+          this.channels[i].values = this.channels[i].values.slice(-MAX_VISIBLE_SAMPLES);
+        }
+      }
+    }
+    const pad = (yMax - yMin) * 0.1 || 0.1;
+    this.yMin = yMin - pad;
+    this.yMax = yMax + pad;
+  }
+
   render(): void {
+    this.swapBuffers();
     const ctx = this.ctx;
     const w = this.canvas.width / this.dpr;
     const h = this.canvas.height / this.dpr;

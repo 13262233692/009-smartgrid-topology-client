@@ -28,6 +28,8 @@ class SldRenderer {
   private components: SldComponent[] = [];
   private connections: SldConnection[] = [];
   private breakerStates: Map<string, BreakerStatus> = new Map();
+  private pendingBreakerStates: Record<string, BreakerStatus> = {};
+  private pendingDirty: boolean = false;
   private energizedMap: Map<string, boolean> = new Map();
   private dpr: number = 1;
   private scaleX: number = 1;
@@ -152,16 +154,35 @@ class SldRenderer {
 
   updateBreakerStates(statuses: Record<string, BreakerStatus>): void {
     for (const [id, status] of Object.entries(statuses)) {
-      this.breakerStates.set(id, status);
-      this.topology.updateBreakerState(id, status);
+      this.pendingBreakerStates[id] = status;
     }
-    this.energizedMap = this.topology.calculate();
-    for (const comp of this.components) {
-      comp.energized = this.energizedMap.get(comp.id) ?? false;
+    this.pendingDirty = true;
+  }
+
+  swapBuffers(): void {
+    if (!this.pendingDirty) return;
+    this.pendingDirty = false;
+    const updates = this.pendingBreakerStates;
+    this.pendingBreakerStates = {};
+    let changed = false;
+    for (const [id, status] of Object.entries(updates)) {
+      const prev = this.breakerStates.get(id);
+      if (prev !== status) {
+        changed = true;
+        this.breakerStates.set(id, status);
+        this.topology.updateBreakerState(id, status);
+      }
+    }
+    if (changed) {
+      this.energizedMap = this.topology.calculate();
+      for (const comp of this.components) {
+        comp.energized = this.energizedMap.get(comp.id) ?? false;
+      }
     }
   }
 
   render(): void {
+    this.swapBuffers();
     const ctx = this.ctx;
     const w = this.canvas.width / this.dpr;
     const h = this.canvas.height / this.dpr;

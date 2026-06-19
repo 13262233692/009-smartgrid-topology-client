@@ -19,6 +19,29 @@ export interface SvMessage {
   timestamp: number;
 }
 
+export type AggType = 'goose' | 'sv' | 'storm';
+
+export interface AggregatedGooseMessage extends GooseMessage {
+  aggType: 'goose';
+  dedupCount: number;
+}
+
+export interface AggregatedSvMessage extends SvMessage {
+  aggType: 'sv';
+}
+
+export interface StormWarningMessage {
+  aggType: 'storm';
+  gooseRate: number;
+  svRate: number;
+  timestamp: number;
+}
+
+export type AggregatedEvent =
+  | AggregatedGooseMessage
+  | AggregatedSvMessage
+  | StormWarningMessage;
+
 export type SubstationEvent =
   | ({ type: 'goose' } & GooseMessage)
   | ({ type: 'sv' } & SvMessage);
@@ -73,4 +96,9 @@ export interface MessageStatistics {
   svCount: number;
   lastGooseTimestamp: number | null;
   lastSvTimestamp: number | null;
+  queueSize: number;
+  processedPerFrame: number;
+  stormActive: boolean;
+  stormGooseRate: number;
+  stormSvRate: number;
 }

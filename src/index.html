@@ -81,7 +81,30 @@
 
     .main-layout {
       display: flex;
-      height: calc(100vh - 40px - 28px);
+      height: calc(100vh - 40px - 28px - 0px);
+    }
+
+    .storm-banner {
+      display: none;
+      height: 30px;
+      padding: 0 16px;
+      background: linear-gradient(90deg, #5c3d00, #7a5100);
+      color: #ffdd88;
+      font-weight: bold;
+      font-size: 12px;
+      align-items: center;
+      border-bottom: 1px solid #996600;
+      letter-spacing: 0.5px;
+      animation: stormPulse 1.5s ease-in-out infinite;
+    }
+
+    .storm-banner.active {
+      display: flex;
+    }
+
+    @keyframes stormPulse {
+      0%, 100% { background: linear-gradient(90deg, #5c3d00, #7a5100); }
+      50% { background: linear-gradient(90deg, #7a5100, #996600); }
     }
 
     .left-panel {
@@ -290,6 +313,8 @@
       <span>IEC 61850 GOOSE/SV</span>
     </div>
   </header>
+
+  <div id="storm-banner" class="storm-banner" style="display:none;"></div>
 
   <div class="main-layout">
     <div class="left-panel">

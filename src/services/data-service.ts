@@ -1,14 +1,21 @@
 import type {
-  SubstationEvent,
   GooseMessage,
   SvMessage,
   ConnectionStatus,
   MessageStatistics,
+  AggregatedEvent,
+  AggregatedGooseMessage,
+  AggregatedSvMessage,
+  StormWarningMessage,
 } from '../models/types';
 
 type GooseCallback = (msg: GooseMessage) => void;
 type SvCallback = (msg: SvMessage) => void;
 type StatusCallback = (status: ConnectionStatus) => void;
+type StormCallback = (msg: StormWarningMessage) => void;
+
+const MAX_QUEUE_SIZE = 4096;
+const DEFAULT_MAX_PER_FRAME = 64;
 
 class DataService {
   private static instance: DataService;
@@ -18,13 +25,18 @@ class DataService {
   private reconnectDelay: number = 1000;
   private maxReconnectDelay: number = 30000;
   private reconnectAttempt: number = 0;
+
+  private pendingQueue: AggregatedEvent[] = [];
   private gooseBuffer: GooseMessage[] = [];
   private svBuffer: SvMessage[] = [];
   private maxGooseBuffer = 100;
   private maxSvBuffer = 1000;
+
   private gooseCallbacks: Set<GooseCallback> = new Set();
   private svCallbacks: Set<SvCallback> = new Set();
   private statusCallbacks: Set<StatusCallback> = new Set();
+  private stormCallbacks: Set<StormCallback> = new Set();
+
   private _status: ConnectionStatus = {
     connected: false,
     url: this.url,
@@ -36,7 +48,13 @@ class DataService {
     svCount: 0,
     lastGooseTimestamp: null,
     lastSvTimestamp: null,
+    queueSize: 0,
+    processedPerFrame: 0,
+    stormActive: false,
+    stormGooseRate: 0,
+    stormSvRate: 0,
   };
+  private stormEndTimer: ReturnType<typeof setTimeout> | null = null;
 
   private constructor() {}
 
@@ -80,40 +98,100 @@ class DataService {
 
   private onMessage(event: MessageEvent): void {
     try {
-      const raw = JSON.parse(event.data as string) as SubstationEvent;
-      if (raw.type === 'goose') {
-        const { type: _, ...gooseData } = raw;
-        this.handleGoose(gooseData as GooseMessage);
-      } else if (raw.type === 'sv') {
-        const { type: _, ...svData } = raw;
-        this.handleSv(svData as SvMessage);
-      } else {
-        (window as any)._unknownType = (raw as any).type;
+      const raw = JSON.parse(event.data as string) as AggregatedEvent;
+      if (this.pendingQueue.length >= MAX_QUEUE_SIZE) {
+        const dropped = this.pendingQueue.splice(0, Math.floor(MAX_QUEUE_SIZE / 4));
+        (window as any)._queueDropped = dropped.length;
       }
+      this.pendingQueue.push(raw);
     } catch (e) {
       (window as any)._parseError = String(e);
       (window as any)._rawMsg = event.data;
     }
   }
 
-  private handleGoose(msg: GooseMessage): void {
-    this.gooseBuffer.push(msg);
+  processBatch(maxPerFrame: number = DEFAULT_MAX_PER_FRAME): number {
+    if (this.pendingQueue.length === 0) {
+      this._stats.queueSize = 0;
+      this._stats.processedPerFrame = 0;
+      return 0;
+    }
+
+    const deadline = performance.now() + 10;
+    const count = Math.min(maxPerFrame, this.pendingQueue.length);
+    let processed = 0;
+
+    while (processed < count && performance.now() < deadline) {
+      const ev = this.pendingQueue.shift();
+      if (!ev) break;
+
+      switch (ev.aggType) {
+        case 'goose':
+          this.handleGoose(ev as AggregatedGooseMessage);
+          break;
+        case 'sv':
+          this.handleSv(ev as AggregatedSvMessage);
+          break;
+        case 'storm':
+          this.handleStorm(ev as StormWarningMessage);
+          break;
+      }
+      processed++;
+    }
+
+    this._stats.queueSize = this.pendingQueue.length;
+    this._stats.processedPerFrame = processed;
+    return processed;
+  }
+
+  private handleGoose(msg: AggregatedGooseMessage): void {
+    const gooseData: GooseMessage = {
+      goId: msg.goId,
+      gocbRef: msg.gocbRef,
+      stNum: msg.stNum,
+      sqNum: msg.sqNum,
+      timestamp: msg.timestamp,
+      datasetRef: msg.datasetRef,
+      breakerStatuses: msg.breakerStatuses,
+    };
+    this.gooseBuffer.push(gooseData);
     if (this.gooseBuffer.length > this.maxGooseBuffer) {
       this.gooseBuffer.shift();
     }
     this._stats.gooseCount++;
     this._stats.lastGooseTimestamp = msg.timestamp;
-    this.gooseCallbacks.forEach((cb) => cb(msg));
+    this.gooseCallbacks.forEach((cb) => cb(gooseData));
   }
 
-  private handleSv(msg: SvMessage): void {
-    this.svBuffer.push(msg);
+  private handleSv(msg: AggregatedSvMessage): void {
+    const svData: SvMessage = {
+      smpCnt: msg.smpCnt,
+      smpMod: msg.smpMod,
+      smpRate: msg.smpRate,
+      voltageChannels: msg.voltageChannels,
+      currentChannels: msg.currentChannels,
+      timestamp: msg.timestamp,
+    };
+    this.svBuffer.push(svData);
     if (this.svBuffer.length > this.maxSvBuffer) {
       this.svBuffer.shift();
     }
     this._stats.svCount++;
     this._stats.lastSvTimestamp = msg.timestamp;
-    this.svCallbacks.forEach((cb) => cb(msg));
+    this.svCallbacks.forEach((cb) => cb(svData));
+  }
+
+  private handleStorm(msg: StormWarningMessage): void {
+    this._stats.stormActive = true;
+    this._stats.stormGooseRate = msg.gooseRate;
+    this._stats.stormSvRate = msg.svRate;
+    if (this.stormEndTimer) clearTimeout(this.stormEndTimer);
+    this.stormEndTimer = setTimeout(() => {
+      this._stats.stormActive = false;
+      this._stats.stormGooseRate = 0;
+      this._stats.stormSvRate = 0;
+    }, 2500);
+    this.stormCallbacks.forEach((cb) => cb(msg));
   }
 
   private onClose(): void {
@@ -143,6 +221,10 @@ class DataService {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.stormEndTimer) {
+      clearTimeout(this.stormEndTimer);
+      this.stormEndTimer = null;
     }
     if (this.ws) {
       this.ws.onopen = null;
@@ -175,6 +257,11 @@ class DataService {
     return () => this.statusCallbacks.delete(callback);
   }
 
+  onStormWarning(callback: StormCallback): () => void {
+    this.stormCallbacks.add(callback);
+    return () => this.stormCallbacks.delete(callback);
+  }
+
   getStatus(): ConnectionStatus {
     return { ...this._status };
   }
@@ -189,6 +276,10 @@ class DataService {
 
   getSvBuffer(): SvMessage[] {
     return [...this.svBuffer];
+  }
+
+  getQueueSize(): number {
+    return this.pendingQueue.length;
   }
 
   disconnect(): void {
